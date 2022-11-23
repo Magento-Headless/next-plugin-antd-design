@@ -398,9 +398,6 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
     },
   };
 
-  // console.log(debugInfo(nextConfig, '🟢', 'cssModuleOptions'));
-  // console.log(util.inspect(cssLoaderClone.options, false, null, true));
-
   // overwrite
   lessLoader.use.splice(cssLoaderInLessLoaderIndex, 1, cssLoaderClone);
 
@@ -419,13 +416,6 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
 
     if (typeof pluginOptions.webpack === 'function')
       return pluginOptions.webpack(webpackConfig, nextConfig);
-  }
-
-  // console.log(debugInfo(nextConfig, '🟣', 'webpackConfig.module.rules'));
-  // console.log(util.inspect(webpackConfig.module.rules, false, null, true));
-
-  if (typeof nextConfig.webpack === 'function') {
-    return nextConfig.webpack(config, options)
   }
 
   return webpackConfig;
@@ -494,7 +484,6 @@ function handleAntdInServer(webpackConfig, nextConfig) {
 module.exports = {
   overrideWebpackConfig,
   handleAntdInServer,
-  //
   loaderUtils,
   getCssModuleLocalIdentForNextJs,
 };

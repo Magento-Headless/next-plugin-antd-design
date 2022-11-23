@@ -23,7 +23,6 @@ module.exports =
     return Object.assign({}, nextConfig, {
       webpack(config, options) {
         const pluginOptions = {
-          ...options,
           modifyVars,
           lessVarsFilePath,
           lessVarsFilePathAppendToEndOfContent,
@@ -32,8 +31,8 @@ module.exports =
         }
 
         return overrideWebpackConfig({
-          config,
-          nextConfig,
+          webpackConfig: config,
+          nextConfig: options,
           pluginOptions
         })
       }

@@ -3,7 +3,7 @@
   "author": "",
   "description": "Use Antd (with Less) with Next.js, Zero Dependency on other Next-Plugins.",
   "license": "",
-  "version": "1.0.0",
+  "version": "0.3.0",
   "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
@@ -17,12 +17,11 @@
     "css module",
     "next plugin"
   ],
-  "devDependencies": {
+  "dependencies": {
     "clone": "^2.1.2",
     "less": "^4.1.3",
     "less-loader": "^11.1.0",
     "loader-utils": "^3.2.1",
     "null-loader": "^4.0.1"
-  },
-  "dependencies": {}
+  }
 }
