@@ -12,57 +12,61 @@ if (require && require.extensions) {
   require.extensions['.less'] = () => {};
 }
 
-/**
- * checkIsNextJs
- *
- * @param webpackConfig
- * @returns {boolean}
- */
-function checkIsNextJs(webpackConfig) {
-  return Boolean(
-    webpackConfig &&
-      webpackConfig.resolveLoader &&
-      webpackConfig.resolveLoader.alias &&
-      (webpackConfig.resolveLoader.alias['next-babel-loader'] ||
-        webpackConfig.resolveLoader.alias['next-swc-loader']),
+const isWebpack5 = (nextConfig) => {
+  return (
+    typeof nextConfig.webpack.version === 'string' &&
+    nextConfig.webpack.version.startsWith('5')
   );
 }
 
-/**
- * debugInfo
- *
- * @param nextConfig
- * @param colorEmoji
- * @param log
- * @returns {string}
- */
-function debugInfo(nextConfig, colorEmoji, log) {
-  const envText = nextConfig && nextConfig.isServer ? 'Server' : 'Client';
+const handleAntdInServer = (webpackConfig, nextConfig) => {
+  if (!nextConfig.isServer) return webpackConfig;
 
-  return `\n\n\n\n${colorEmoji} -------- ${envText} --------\n   ${log}`;
+  const ANTD_STYLE_REGX = /(antd\/.*?\/style|@ant-design).*(?<![.]js)$/;
+  const exts = [...webpackConfig.externals];
+
+  webpackConfig.externals = isWebpack5(nextConfig)
+    ? [
+        // ctx and cb are both webpack5's params
+        // ctx eqauls { context, request, contextInfo, getResolve }
+        // https://webpack.js.org/configuration/externals/#function
+        (ctx, cb) => {
+          if (ctx.request.match(ANTD_STYLE_REGX)) return cb();
+
+          // next's params are different when webpack5 enable
+          // https://github.com/vercel/next.js/blob/0425763ed6a90f4ff99ab2ff37821da61d895e09/packages/next/build/webpack-config.ts#L770
+          if (typeof exts[0] === 'function') return exts[0](ctx, cb);
+          else return cb();
+        },
+        ...(typeof exts[0] === 'function' ? [] : exts),
+      ]
+    : [
+        // webpack4
+        (ctx, req, cb) => {
+          if (req.match(ANTD_STYLE_REGX)) return cb();
+
+          if (typeof exts[0] === 'function') return exts[0](ctx, req, cb);
+          else return cb();
+        },
+        ...(typeof exts[0] === 'function' ? [] : exts),
+      ];
+
+  webpackConfig.module.rules.unshift({
+    test: ANTD_STYLE_REGX,
+    use: 'null-loader',
+  });
+
+  return webpackConfig;
 }
 
-/**
- * overrideWebpackConfig
- *
- * @param webpackConfig
- * @param nextConfig
- * @param pluginOptions
- * @returns {*}
- */
-function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
-  const isNextJs = checkIsNextJs(webpackConfig);
-
-  if (isNextJs && !nextConfig.defaultLoaders) {
+const overrideWebpackConfig = ({ webpackConfig, nextConfig, pluginOptions }) => {
+  if (!nextConfig.defaultLoaders) {
     throw new Error(
-      // eslint-disable-next-line max-len
       'This plugin is not compatible with Next.js versions below 5.0.0 https://err.sh/next-plugins/upgrade',
     );
   }
 
-  let __DEV__;
-  if (isNextJs) __DEV__ = nextConfig.dev;
-  else __DEV__ = webpackConfig.mode !== 'production';
+  let __DEV__ = nextConfig.dev;
 
   const { rules } = webpackConfig.module;
 
@@ -130,14 +134,10 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
   |--------------------------------------------------------------------------
   | lessLoader (from the sassLoader clone)
   |--------------------------------------------------------------------------
-  |
   | Tips:
   | sass has  test `module` and `non-module` loader,
   | but `less-loader` has `auto: true`, so just copy onec.
-  |
   */
-
-  // find
   const sassLoaderIndex = rule.oneOf.findIndex(
     (item) => item.test.toString() === /\.module\.(scss|sass)$/.toString(),
   );
@@ -165,10 +165,8 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
   |--------------------------------------------------------------------------
   | file-loader supported *.less
   |--------------------------------------------------------------------------
-  |
   | url()s fail to load files
   | https://github.com/SolidZORO/next-plugin-antd-less/issues/39
-  |
   */
   const fileLoaderIndex = rule.oneOf.findIndex((item) => {
     if (
@@ -191,67 +189,42 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
   |--------------------------------------------------------------------------
   | noop-loader supported *.less (Next.js ONLY)
   |--------------------------------------------------------------------------
-  |
   */
-  if (isNextJs) {
-    const noopLoaderIndex = rule.oneOf.findIndex((item) => {
-      if (
-        item &&
-        item.test &&
-        item.test.toString() ===
-          // RAW test
-          /\.(css|scss|sass)(\.webpack\[javascript\/auto\])?$/.toString()
-      ) {
-        return item;
-      }
-    });
-
-    const noopLoader = rule.oneOf[noopLoaderIndex];
-
-    if (noopLoader) {
-      noopLoader.test =
-        /\.(css|scss|sass|less)(\.webpack\[javascript\/auto\])?$/;
+  const noopLoaderIndex = rule.oneOf.findIndex((item) => {
+    if (
+      item &&
+      item.test &&
+      item.test.toString() ===
+        // RAW test
+        /\.(css|scss|sass)(\.webpack\[javascript\/auto\])?$/.toString()
+    ) {
+      return item;
     }
+  });
+
+  const noopLoader = rule.oneOf[noopLoaderIndex];
+
+  if (noopLoader) {
+    noopLoader.test =
+      /\.(css|scss|sass|less)(\.webpack\[javascript\/auto\])?$/;
   }
 
-  /*
-  |--------------------------------------------------------------------------
-  | next-image-loader supported *.less (Next.js ONLY)
-  |--------------------------------------------------------------------------
-  |
-  | TODO:
-  |
-  | Modify this to enable *.less to use background-image.
-  | The
-  | But I don't know why it only takes effect in dev, when prod will prompt `Error: Module parse failed: Unexpected character '�' (1:0)`.
-  | This should actually be a less-loader problem, but considering that the CRA is still wp4 over there, it's too late to upgrade to wp5.
-  | I'm not sure if this is a problem with CRA, but I'm not sure if it's a problem with Next.js, so I'll just leave it alone.
-  | I don't know what to do. This Next.js my head is big, with the black box, just a patch version upgrade, you can make a bunch of plug-ins crash, my mind also collapsed, tired ah ......
-  */
-  /*
-  |--------------------------------------------------------------------------
-  | ignore-loader supported *.less (Next.js Server ONLY)
-  |--------------------------------------------------------------------------
-  |
-  */
-  if (isNextJs) {
-    const ignoreLoaderIndex = rule.oneOf.findIndex(
-      (item) =>
-        item &&
-        item.use &&
-        item.use.includes &&
-        item.use.includes('ignore-loader'),
-    );
+  const ignoreLoaderIndex = rule.oneOf.findIndex(
+    (item) =>
+      item &&
+      item.use &&
+      item.use.includes &&
+      item.use.includes('ignore-loader'),
+  );
 
-    const ignoreLoader = rule.oneOf[ignoreLoaderIndex];
+  const ignoreLoader = rule.oneOf[ignoreLoaderIndex];
 
-    if (ignoreLoader) {
-      // RAW ---> test: [ /(?<!\.module)\.css$/, /(?<!\.module)\.(scss|sass)$/ ],
-      ignoreLoader.test = [
-        /(?<!\.module)\.css$/,
-        /(?<!\.module)\.(scss|sass|less)$/,
-      ];
-    }
+  if (ignoreLoader) {
+    // RAW ---> test: [ /(?<!\.module)\.css$/, /(?<!\.module)\.(scss|sass)$/ ],
+    ignoreLoader.test = [
+      /(?<!\.module)\.css$/,
+      /(?<!\.module)\.(scss|sass|less)$/,
+    ];
   }
 
   /*
@@ -261,7 +234,6 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
   |
   | CONSTANTS --> e.g. `@THEME--DARK: 'theme-dark';`
   |                    `:global(.@{THEME--DARK}) { color: red }`
-  |
   */
   let modifyVars = undefined;
 
@@ -277,10 +249,8 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
   |--------------------------------------------------------------------------
   | lessVarsFilePath (Hot Reload is **Supported**, can overwrite `antd` vars)
   |--------------------------------------------------------------------------
-  |
   | variables file --> e.g. `./styles/variables.less`
   |                         `@primary-color: #04f;`
-  |
   */
   if (pluginOptions.lessVarsFilePath) {
     lessLoaderOptions.additionalData = (content) => {
@@ -305,32 +275,19 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
     };
   }
 
-  // console.log(debugInfo(nextConfig, '🟡', 'lessLoaderOptions'));
-  // console.log(util.inspect(lessLoaderOptions, false, null, true));
-
   lessLoader.use.splice(lessLoaderIndex, 1, {
-    // https://github.com/webpack-contrib/less-loader#options
     loader: 'less-loader',
-    options: lessLoaderOptions,
+    options: lessLoaderOptions
   });
-
-  //
-  //
-  //
-  // ---- cssLoader In LessModule ----
 
   // find
   const cssLoaderInLessLoaderIndex = lessLoader.use.findIndex((item) =>
-    `${item.loader}`.includes('css-loader'),
+    `${item.loader}`.includes('css-loader')
   );
   const cssLoaderInLessLoader = lessLoader.use.find((item) =>
-    `${item.loader}`.includes('css-loader'),
+    `${item.loader}`.includes('css-loader')
   );
 
-  // 🔰 Compatibility CRA v5.0
-  //
-  // find and delete `resolve-url-loader`
-  //
   // in CRA v5.0, `sass-loader` uses `resolve-url-loader` by default,
   // but `less-loader` doesn't need it and will throw an ERROR if it does
   const resolveUrlLoaderInLessLoaderIndex = lessLoader.use.findIndex((item) =>
@@ -370,113 +327,32 @@ function overrideWebpackConfig({ webpackConfig, nextConfig, pluginOptions }) {
     modules: {
       localIdentName,
       ...cssLoaderClone.options.modules,
-      //
-      // if enable `local` mode, you can write this less
-      //
-      // ```styles.module.less
-      // .abc {      <---- is local, match class='abc--nx3xc2'
-      //   color: red;
-      //
-      //   :global {
-      //     .xyz {  <---- is global, match class='xyz'
-      //       color: blue;
-      //     }
-      //   }
-      // }
-      //
       mode: 'local', // local, global, and pure, next.js default is `pure`
       //
       // Inherited from pluginOptions
       ...(pluginOptions.cssLoaderOptions || {}).modules,
       //
       // recommended to keep `true`!
-
       auto: true,
       // Next.js need getLocalIdent (non-full-featured localIdentName 😂)
       // CRA Don't need it (full-featured localIdentName)
-      getLocalIdent: isNextJs ? getLocalIdentFn : undefined,
-    },
+      getLocalIdent: getLocalIdentFn
+    }
   };
 
   // overwrite
   lessLoader.use.splice(cssLoaderInLessLoaderIndex, 1, cssLoaderClone);
 
-  //
-  //
-  //
   // ---- append lessLoader to webpack modules ----
   rule.oneOf.splice(sassLoaderIndex, 0, lessLoader);
   webpackConfig.module.rules[ruleIndex] = rule;
 
-  //
-  //
   // ---- handleAntdInServer (ONLY Next.js) ----
-  if (isNextJs) {
-    webpackConfig = handleAntdInServer(webpackConfig, nextConfig);
+  webpackConfig = handleAntdInServer(webpackConfig, nextConfig);
 
-    if (typeof pluginOptions.webpack === 'function')
-      return pluginOptions.webpack(webpackConfig, nextConfig);
+  if (typeof pluginOptions.webpack === 'function') {
+    return pluginOptions.webpack(webpackConfig, nextConfig);
   }
-
-  return webpackConfig;
-}
-
-/**
- * isWebpack5
- *
- * @param nextConfig
- * @returns {boolean}
- */
-function isWebpack5(nextConfig) {
-  return (
-    typeof nextConfig.webpack.version === 'string' &&
-    nextConfig.webpack.version.startsWith('5')
-  );
-}
-
-/**
- * handleAntdInServer
- *
- * @param webpackConfig
- * @param nextConfig
- * @returns {*}
- */
-function handleAntdInServer(webpackConfig, nextConfig) {
-  if (!nextConfig.isServer) return webpackConfig;
-
-  const ANTD_STYLE_REGX = /(antd\/.*?\/style|@ant-design).*(?<![.]js)$/;
-  const exts = [...webpackConfig.externals];
-
-  webpackConfig.externals = isWebpack5(nextConfig)
-    ? [
-        // ctx and cb are both webpack5's params
-        // ctx eqauls { context, request, contextInfo, getResolve }
-        // https://webpack.js.org/configuration/externals/#function
-        (ctx, cb) => {
-          if (ctx.request.match(ANTD_STYLE_REGX)) return cb();
-
-          // next's params are different when webpack5 enable
-          // https://github.com/vercel/next.js/blob/0425763ed6a90f4ff99ab2ff37821da61d895e09/packages/next/build/webpack-config.ts#L770
-          if (typeof exts[0] === 'function') return exts[0](ctx, cb);
-          else return cb();
-        },
-        ...(typeof exts[0] === 'function' ? [] : exts),
-      ]
-    : [
-        // webpack4
-        (ctx, req, cb) => {
-          if (req.match(ANTD_STYLE_REGX)) return cb();
-
-          if (typeof exts[0] === 'function') return exts[0](ctx, req, cb);
-          else return cb();
-        },
-        ...(typeof exts[0] === 'function' ? [] : exts),
-      ];
-
-  webpackConfig.module.rules.unshift({
-    test: ANTD_STYLE_REGX,
-    use: 'null-loader',
-  });
 
   return webpackConfig;
 }
@@ -485,5 +361,5 @@ module.exports = {
   overrideWebpackConfig,
   handleAntdInServer,
   loaderUtils,
-  getCssModuleLocalIdentForNextJs,
+  getCssModuleLocalIdentForNextJs
 };

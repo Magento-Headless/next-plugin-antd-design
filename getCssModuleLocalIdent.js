@@ -1,14 +1,14 @@
 const loaderUtils = require('loader-utils');
 const path = require('path');
 
-function getCssModuleLocalIdentForNextJs(
+const getCssModuleLocalIdentForNextJs = (
   context,
   _,
   exportName,
   options,
   __DEV__,
   localIdentNameFollowDev,
-) {
+) => {
   const relativePath = path
     .relative(context.rootContext, context.resourcePath)
     .replace(/\\+/g, '/');
